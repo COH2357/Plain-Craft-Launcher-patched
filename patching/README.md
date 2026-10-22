@@ -1,85 +1,91 @@
-# PCL 修改版补丁工具（patching）
+# 常量折叠与 IL 改造实验记录（patching）
 
-本目录是 `Plain Craft Launcher 2`（PCL）2.99.0.0 版本的**第三方修改**的完整补丁来源与构建产物。
+本目录是一份关于 VB.NET **编译期常量、死代码消除与 IL 结构**的研究记录。
+研究对象：`Plain Craft Launcher 2`（PCL）2.99.0.0 的公开源码与官方发布程序。
 上游：<https://github.com/Meloong-Git/PCL>
 
-> 本仓库不是官方仓库。修改版仅用于解除 PCL 中因合规原因关闭的 MC 下载/整合包安装功能，
-> 遵守上游《PCL 分发有限许可》与《PCL 存储库合理使用指南》中的"重度使用"条款：
-> 明确标注第三方修改、名称以 Plain Craft Launcher 开头并带修改后缀、保留 LICENCE、
-> 公开源码、保留官方关于页署名与正版购买劝导逻辑、界面主色相保持蓝色。
+> 这不是官方仓库。本目录**不包含**任何构建产物或修改版程序，只做静态分析与可复现的实验记录；
+> 所有实验均在本地对官方文件的一次性副本上进行。详见仓库根目录的 [README](../README.md) 与
+> [免责声明](../DISCLAIMER.md)。
 
-## 修改内容（相对官方 2.99.0.0）
+## 研究对象：被常量折叠裁掉的位置
 
-| # | 位置 | 官方行为 | 修改后 |
-|---|---|---|---|
-| 1 | `Modules/ModSecret.vb:18` | `RestrictMcDownload = True` | `= False`（源码级修改，已提交） |
-| 2 | `PageDownloadInstall::LoaderInit` | 只构造一个"关闭下载"的占位 LoaderTask（正常分支被常量折叠删除） | 改为取 `ModDownload.DlClientListLoader`，下载页恢复源列表 |
-| 3 | `PageDownloadInstall::LoadInstanceFinished` | MC 下载卡片 `Visibility = Collapsed` | `= Visible` |
-| 4 | `ModModpack::ModpackInstall(String,String,String)` | 卫语句恒真 → 直接 `Throw`，后面的 `Select Case` 分发被删除 | 新增加分发方法 `$PCLPatch$DispatchModpackInstall`，按 `PackType` 调回 7 个安装器 |
-| 5 | `ModModpack::ModpackInstall()`（无参） | 只剩 `Hint("为遵守相关法律法规…")`，闭包类被清空 | 重建 `SelectFile` + `RunInThread` 流程（静态字段传参） |
-| 6 | `PageDownloadResourceDetail::InitializeStackResourceVersions` | 只挂 `Save_Click`（下载） | 整合包行额外挂 `Install_Click`（安装），条件按源码恢复 |
+PCL 用 `Public Const RestrictMcDownload As Boolean = True` 控制下载相关功能是否开放。
+由于它是 `Const`，编译器会把值内联到每个使用点并做**常量折叠**，等价于把 `If RestrictMcDownload Then`
+直接替换成 `True`，于是分支一侧被判定为不可达并从 IL 中移除。可观察到的裁剪点：
 
-要点：常量 `Const` 被编译期内联后，编译器把 `If RestrictMcDownload Then Throw` 之后的代码
-当作不可达代码删除，因此**安装器本体（InstallPackCurseForge / Modrinth / HMCL / MMC / MCBBS /
-LauncherPack / Compress）仍完整存在于官方 exe 中**，补丁只需重建被剪掉的"入口与分发接线"，
-不需要重新实现整合包格式解析。详细 IL 记录见 [PATCH-README.md](PATCH-README.md)。
+| # | 位置 | 裁剪后的形态 |
+|---|---|---|
+| 1 | `ModSecret.vb:18` | 源码级常量，`True` / `False` 即“开关”本体 |
+| 2 | `PageDownloadInstall::LoaderInit` | 只剩构造“关闭下载”占位 `LoaderTask` 的分支，`Else` 里的 `DlClientListLoader` 被删 |
+| 3 | `PageDownloadInstall::LoadInstanceFinished` | 卡片 `Visibility` 恒为 `Collapsed`，没有分支 |
+| 4 | `ModModpack::ModpackInstall(String,String,String)` | 卫语句恒真，方法体止于 `ldstr msg; newobj Exception; throw`，先前 `Select Case` 分发与 7 个调用点全部消失 |
+| 5 | `ModModpack::ModpackInstall()` | 只剩 `Hint(msg)`；`SelectFile` 与 `RunInThread(Sub() ...)` 连同闭包内容被删，闭包类退化为空壳 |
+| 6 | `PageDownloadResourceDetail::InitializeStackResourceVersions` | 只剩挂 `Save_Click` 的分支，整合包行的 `Install_Click` 委托创建被删 |
 
-## 产物
+关键观察：**编译器只删“不可达的语句”，不删“未被引用的方法体”**。因此七 个安装器
+（`InstallPackCurseForge` / `InstallPackModrinth` / `InstallPackHMCL` / `InstallPackMMC` /
+`InstallPackMCBBS` / `InstallPackLauncherPack` / `InstallPackCompress`）在官方程序里依然完整，
+实验只需按源码语义重建丢失的调用点，无需重新实现整合包格式解析。
 
-- `../build/Plain Craft Launcher 2（deepseek修改）.exe`：最终构建（5,976,064 字节），
-  版本信息仅在原值后追加"（deepseek修改）"，其余字段保持官方值。
+## 实验方法与关键技术点
 
-## 复现步骤
+1. **元数据读取**：Mono.Cecil 0.11.5（net40）读模块、类型、方法体、局部变量与异常处理表。
+   官方程序把依赖（PCLCS、MeloongCore、Newtonsoft.Json、NAudio 等）内嵌在 `PCL.Resources.resources`，
+   用 `AssemblyResolve` 动态加载，因此写回时需要自定义 `IAssemblyResolver`（见 `tools/Resolver.cs`），
+   否则会抛 `AssemblyResolutionException`。
+2. **调用点重建**：新增一个 `switch (packType)` 分发方法，按原 `Select Case` 的参数顺序调用七个安装器；
+   泛型/委托/可选参数类型（`OneOf`、`Nullable`、`ValueTuple`、`Action`）直接复用二进制中已有的
+   `MethodReference`，避免手工构造带来的签名偏差。
+3. **异常结构约束**：改写 `try` 区域时，**最后一条指令必须是 `leave` / `throw` / `endfinally`**。
+   早期实验把原 `throw` 改成 `nop`，控制流会落入 finally handler，运行时报
+   `InvalidProgramException: 公共语言运行时检测到无效的程序。`——这是整项研究中最容易踩的坑。
+4. **闭包重建**：被删的 lambda 对应的闭包类型已退化为空壳，无法复用；改用“静态字段传参 + 静态方法回调 +
+   `ldftn`/`Action::.ctor`”替代，语义等价且不依赖闭包。
+5. **结构验证**：`RuntimeHelpers.PrepareMethod` 可在不执行方法的前提下触发 JIT，从而在无 GUI 环境中
+   判断 IL 是否合法；配合 IL dump 逐条比对分支目标与 EH 表边界。
 
-环境：Windows + .NET Framework 4.8 自带的 `csc.exe`、Python 3、[Mono.Cecil 0.11.5 (net40)](https://www.nuget.org/packages/Mono.Cecil/0.11.5)、
-`pip install pefile`、[rcedit](https://github.com/electron/rcedit/releases)。
+## 复现步骤（本地实验）
+
+> 需要自行准备官方 2.99.0.0 发布文件；仓库不附带。
 
 ```bat
-:: 0) 从官方仓库检出 2.99.0.0，并把 ModSecret.vb 的 RestrictMcDownload 改为 False
-:: 1) 原始字节补丁（下载页）
+:: 1) 原始字节补丁（对照 LoaderInit / LoadInstanceFinished 的 IL 偏移）
 python patch.py "Plain Craft Launcher 2.exe" step1.exe
 
-:: 2) 重建分发（把 Cecil 与 Resolver 一起编译）
+:: 2) 重建分发调用点（Cecil 写回）
 csc -nologo -out:PatchCecil.exe -r:Mono.Cecil.dll PatchCecil.cs Resolver.cs
-PatchCecil.exe step1.exe patched.exe <从 exe 内嵌资源解出的依赖目录>
+PatchCecil.exe step1.exe patched.exe <从内嵌资源解出的依赖目录>
 
-:: 3) 重建无参安装与资源页安装按钮
+:: 3) 重建无参入口与资源页安装按钮
 csc -nologo -out:PatchFull.exe -r:Mono.Cecil.dll PatchFull.cs Resolver.cs
-PatchFull.exe patched.exe "Plain Craft Launcher 2（deepseek修改）.exe" <依赖目录>
-
-:: 4) 写入版本信息（注意 rcedit 必须用绝对路径）
-rcedit.exe "%CD%\Plain Craft Launcher 2（deepseek修改）.exe" ^
-  --set-version-string FileDescription "Plain Craft Launcher 启动器（deepseek修改）" ^
-  --set-version-string Comments "deepseek 修改版：恢复下载源列表、MC 下载卡片可见性、整合包安装分发与安装入口"
+PatchFull.exe patched.exe result.exe <依赖目录>
 ```
 
-依赖目录可由 `tools/ExtractRes.cs` 从官方 exe 的 `PCL.Resources.resources` 中解出
-（PCL 在 `Application.xaml.vb` 里以 `AssemblyResolve` 动态加载 PCLCS、MeloongCore、Newtonsoft.Json 等）。
-本仓库不附带这些第三方 DLL。
+依赖目录可用 `tools/ExtractRes.cs` 从官方程序内嵌资源中解出（仅本地使用，请勿再分发）。
 
 ## 工具清单（`tools/`）
 
 | 文件 | 用途 |
 |---|---|
-| `PatchCecil.cs` | 分发补丁：新增 `$PCLPatch$DispatchModpackInstall` 并改写 3 参 `ModpackInstall` |
+| `PatchCecil.cs` | 分发调用点重建（`$PCLPatch$DispatchModpackInstall`） |
 | `PatchFull.cs` | 无参 `ModpackInstall` 重建 + 资源页安装按钮条件分支 |
-| `PatchTips.cs` | 曾经移除两处 ToolTip 的实验补丁（**最终产物未应用**，已回滚） |
-| `Resolver.cs` | Cecil 解析器（优先依赖目录，再回退 `Assembly.Load`） |
+| `PatchTips.cs` | 移除 ToolTip 的实验（**最终未采用**，仅作记录） |
+| `Resolver.cs` | 自定义 Cecil 解析器 |
 | `Probe2.cs` / `Probe3.cs` / `Probe4.cs` | IL dump / 方法查找 / 字符串查找 |
-| `JitCheck.cs` / `CtorJit.cs` / `VerifyJit.cs` | 用 `RuntimeHelpers.PrepareMethod` 做 JIT 校验 |
-| `ExtractRes.cs` | 从官方 exe 解出内嵌依赖 |
-| `DumpMethod.cs` / `DumpFull.cs` / `HandlerDump.cs` / `TokenDump.cs` / `Inspector.cs` / `FindMethod.cs` / `ListRes.cs` / `ResCount.cs` / `ResList.cs` | 各类 IL / 元数据检查小工具 |
-| `PatchExp.cs` / `PatchMin2.cs` / `PatchGC.cs` / `PatchGC2.cs` / `PatchTriv.cs` / `PatchT.cs` / `PatchDiag.cs` | 定位 `InvalidProgramException` 过程中的实验代码（保留供参考，不参与最终构建） |
-| `TestWrite.cs` / `TestWrite2.cs` / `Smoke.cs` | Cecil 读写连通性 / 冒烟测试 |
+| `JitCheck.cs` / `CtorJit.cs` / `VerifyJit.cs` | `PrepareMethod` JIT 校验 |
+| `ExtractRes.cs` | 解出内嵌依赖 |
+| `DumpMethod.cs` / `DumpFull.cs` / `HandlerDump.cs` / `TokenDump.cs` / `Inspector.cs` / `FindMethod.cs` / `ListRes.cs` / `ResCount.cs` / `ResList.cs` | 各类元数据检查 |
+| `PatchExp.cs` / `PatchMin2.cs` / `PatchGC.cs` / `PatchGC2.cs` / `PatchTriv.cs` / `PatchT.cs` / `PatchDiag.cs` | 失败实验留档（用于说明哪些假设被证伪） |
+| `TestWrite.cs` / `TestWrite2.cs` / `Smoke.cs` | 读写连通性与冒烟测试 |
 
-所有 C# 工具用 .NET Framework 4.8 的 `csc.exe` 编译，需引用 Mono.Cecil 0.11.5 的 **net40** 版本
-（netstandard 版本在 .NET Framework 下不可用）。
+C# 工具用 .NET Framework 4.8 的 `csc.exe` 编译，需引用 Mono.Cecil 0.11.5 的 **net40** 版本。
 
 ## 验证状态
 
-- IL dump 结构逐条比对；六处补丁均已确认出现在最终产物中。
-- `RuntimeHelpers.PrepareMethod`：`ModpackInstall`（无参 / 3 参）、`$PCLPatch$DispatchModpackInstall`、
-  `$PCLPatch$InstallPendingModpack`、`InitializeStackResourceVersions`、`LoaderInit`、
-  `LoadInstanceFinished` 全部 JIT 通过。
-- 内嵌资源（`Plain Craft Launcher 2.g.resources`、`PCL.Resources.resources`）与官方一致。
-- **未做**真实 GUI 的端到端安装验证：构建在无交互会话中完成，请在实机点击确认。
+- IL 结构与 EH 表边界逐条比对；`ModpackInstall`（无参 / 3 参）、分发方法、无参回调方法、
+  `InitializeStackResourceVersions`、`LoaderInit`、`LoadInstanceFinished` 均通过 `PrepareMethod` JIT 校验。
+- 内嵌资源清单与官方一致。
+- **未做**真实 GUI 的端到端操作验证：研究在无交互会话中完成，结论仅代表结构层面正确。
+
+详细逐条记录见 [PATCH-README.md](PATCH-README.md)。

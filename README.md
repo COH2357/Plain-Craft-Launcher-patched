@@ -1,54 +1,48 @@
-# Plain Craft Launcher 修改版（PCL-patched）
+# PCL 代码功能研究：常量折叠、IL 结构与调用链还原
 
-> [!WARNING]
-> **本仓库是第三方修改版，不是官方仓库。**
-> 它由社区成员基于 PCL 2.99.0.0 的公开源码与官方二进制独立修改，**与龙腾猫跃（LTCat）及 PCL 官方团队没有任何关系**，
-> 未经官方授权或背书。请勿将本仓库误认为官方渠道，也不要向官方反馈这里的问题。
->
-> 官方仓库：<https://github.com/Meloong-Git/PCL> ｜ 官方下载：<https://meloong.com/pcl>
->
-> 本修改版仅供个人学习、研究与技术交流，请支持官方版本；使用前请阅读 [免责声明](DISCLAIMER.md)。
+本仓库是一份**个人技术研究记录**，研究对象是 [Plain Craft Launcher 2](https://github.com/Meloong-Git/PCL)（PCL）
+2.99.0.0 版本的公开源代码与官方发布程序。关注的问题是：
 
-## 这是什么
+> 当 VB.NET 编译器遇到 `Const RestrictMcDownload As Boolean = True` 这类编译期常量时，
+> 它到底删掉了什么、保留了什么？被删掉的分支还能不能在 IL 层面被识别和还原？
 
-PCL 2.99.0.0 正式版出于合规原因关闭了 MC 下载与整合包安装相关功能。本仓库是该版本的**第三方修改版**：
+研究结论与实验代码在此公开，**本仓库不发布、也不再分发任何可执行构建产物**。
+这不是 PCL 官方仓库，与龙腾猫跃（LTCat）及 PCL 官方团队没有任何关系。
 
-- 在源码层面把 `Plain Craft Launcher 2/Modules/ModSecret.vb` 里的 `RestrictMcDownload` 改为 `False`；
-- 由于它是编译期常量，官方二进制里被常量折叠删掉的分支，通过 IL 层补丁按上游源码逻辑重建；
-- 所有补丁源码、IL 记录与复现步骤一并公开，便于审计。
+## 研究问题与结论
 
-## 修改内容
+| 问题 | 结论 |
+|---|---|
+| `Const` 内联后死代码消除的粒度是什么？ | 粒度是**方法体内部的语句**：`If Const Then Throw` 之后的整段代码连同局部变量初始化被移除，但同一类型里**未被调用的方法体不会被删除** |
+| 被"删掉"的下载/安装逻辑真的消失了吗？ | 没有。`InstallPackCurseForge` / `InstallPackModrinth` / `InstallPackHMCL` / `InstallPackMMC` / `InstallPackMCBBS` / `InstallPackLauncherPack` / `InstallPackCompress` 七个安装器方法体完整保留，只是失去了调用者 |
+| 分支条件被折叠成常量后，IL 还剩什么线索？ | 只剩一条 `ldstr` + `newobj Exception` + `throw`；原先的 `Select Case` 跳转表整体消失，可通过分支目标数量与局部变量残留反推原结构 |
+| Lambda 被删除后闭包类型还能复用吗？ | 不能。闭包类会被清成只剩 `.ctor` 的空壳（`ModpackInstall()` 的 `_Closure$__0-0`），必须改用静态字段 + 委托来重建回调 |
+| 异常处理结构在 IL 补丁里有什么硬约束？ | `try` 区域的**最后一条指令必须是 `leave` / `throw` / `endfinally`**。把原 `throw` 改成 `nop` 会让控制流"掉进" finally handler，运行时抛 `InvalidProgramException`——这是本次研究踩到的最深的坑 |
+| 如何在无 GUI 环境下验证补丁的结构正确性？ | `RuntimeHelpers.PrepareMethod` 可以触发 JIT 编译而不执行方法，配合 `COMPlus_JitNoInline=1` 能有效暴露非法 IL |
 
-| # | 位置 | 官方行为 | 修改后 |
-|---|---|---|---|
-| 1 | `ModSecret.vb:18` | `RestrictMcDownload = True` | `= False`（源码级） |
-| 2 | `PageDownloadInstall::LoaderInit` | 只生成"关闭下载"的占位任务 | 改用 `ModDownload.DlClientListLoader`，恢复下载源列表 |
-| 3 | `PageDownloadInstall::LoadInstanceFinished` | MC 下载卡片 `Collapsed` | `Visible` |
-| 4 | `ModModpack::ModpackInstall(String,String,String)` | 卫语句恒真，直接 `Throw` | 重建 `Select Case` 分发，调回 7 个安装器 |
-| 5 | `ModModpack::ModpackInstall()` | 只剩合规提示 | 重建 `SelectFile` + `RunInThread` 流程 |
-| 6 | `PageDownloadResourceDetail::InitializeStackResourceVersions` | 只挂下载按钮 | 整合包行额外挂"安装"按钮 |
+## 研究方法
 
-安装器本体（CurseForge / Modrinth / HMCL / MMC / MCBBS / LauncherPack / Compress）本就完整保留在官方 exe 中，
-补丁只重建了被剪掉的入口与分发接线，未重新实现整合包格式解析。
+- **静态分析**：用 Mono.Cecil 0.11.5（net40）读取元数据、方法体、局部变量与异常处理表；用自写的 dump 工具输出可读 IL。
+- **对照分析**：把二进制 IL 与公开 VB 源码逐句对照，确认"源码里写了什么 → 编译后剩了什么"。
+- **重建实验**：在本地副本上按源码语义重建被裁剪的入口与分发，用 IL dump + JIT 校验判断结构是否合法。
+- **边界**：所有实验都在本地对官方文件的一次性副本上进行；仓库中只保留工具源码与分析记录。
 
-## 下载构建产物
+## 实验代码
 
-- 文件：[`build/Plain Craft Launcher 2（deepseek修改）.exe`](<build/Plain Craft Launcher 2（deepseek修改）.exe>)
-- 大小：5,976,064 字节
-- SHA-256：`48f241fc70717c004a1d4b094601152a96329aa0fd0ce275cd7facbe94d51990`
-- 校验值与版本信息说明见 [build/README.md](build/README.md)
+`patching/` 目录包含本次研究用到的全部工具与记录：
 
-## 如何复现
+- [patching/README.md](patching/README.md)：研究环境、分析流程与工具清单
+- [patching/PATCH-README.md](patching/PATCH-README.md)：逐条 IL 改造记录（含失败实验与原因）
+- `patching/tools/*.cs`：元数据 dump、方法查找、JIT 校验、补丁实验等 C# 工具源码
 
-补丁工具、构建步骤与逐条 IL 说明在 [patching/README.md](patching/README.md)；
-改造过程的详细记录在 [patching/PATCH-README.md](patching/PATCH-README.md)。
+其中 `PatchExp.cs`、`PatchGC.cs`、`PatchTriv.cs` 等是定位 `InvalidProgramException` 过程中的失败实验，
+保留它们是为了记录"哪些假设被证伪"，而非可用的补丁。
 
-## 免责与许可
+## 关于可执行文件
 
-- [免责声明（DISCLAIMER.md）](DISCLAIMER.md)：非官方、无担保、使用风险自负、合法使用与下架承诺。
-- 本仓库遵循上游 [LICENCE](LICENCE)（《PCL 分发有限许可》）中"重度使用"的要求：标注第三方修改、
-  名称以 `Plain Craft Launcher (PCL)` 开头并带修改后缀、保留 LICENCE、公开源码、
-  保留官方关于页署名与正版购买劝导逻辑、界面主色相保持蓝色。
+仓库**不提供**任何构建产物、修改版程序或从官方程序中解出的依赖 DLL。
+如果你出于研究目的自行复现，请自行获取官方发布文件、自行承担合规责任，并遵守
+[LICENCE](LICENCE) 与 [免责声明](DISCLAIMER.md)。
 
 ---
 
