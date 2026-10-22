@@ -342,3 +342,7 @@ ASALocalRun/
 healthchecksdb
 
 MaskFiles/
+
+# ---- PCL patched build workspace (本地逆向产物，不入库) ----
+/_patchwork/
+/Plain Craft Launcher 2.exe
