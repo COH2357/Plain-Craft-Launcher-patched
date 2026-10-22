@@ -26,7 +26,7 @@ LauncherPack / Compress）仍完整存在于官方 exe 中**，补丁只需重�
 
 ## 产物
 
-- `build/Plain Craft Launcher 2（deepseek修改）.exe`：最终构建（5,976,064 字节），
+- `../build/Plain Craft Launcher 2（deepseek修改）.exe`：最终构建（5,976,064 字节），
   版本信息仅在原值后追加"（deepseek修改）"，其余字段保持官方值。
 
 ## 复现步骤

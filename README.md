@@ -1,3 +1,17 @@
+> [!WARNING]
+> **本仓库是第三方修改版（非官方）。**
+> 它由社区成员基于 PCL 2.99.0.0 的源码与官方二进制独立修改，**与龙腾猫跃（LTCat）及 PCL 官方团队没有任何关系**。
+> 官方仓库：<https://github.com/Meloong-Git/PCL> ｜ 官方下载：<https://meloong.com/pcl>
+>
+> - **修改版程序**：[`Plain Craft Launcher 2（deepseek修改）.exe`](<build/Plain Craft Launcher 2（deepseek修改）.exe>)（5,976,064 字节，SHA-256 见 [build/README.md](build/README.md)）
+> - **改了什么**：把 `RestrictMcDownload` 置为 `False`，并恢复被常量折叠删掉的下载源列表、MC 下载卡片、整合包安装分发与安装入口
+> - **怎么做的 / 如何复现**：[patching/README.md](patching/README.md)、[patching/PATCH-README.md](patching/PATCH-README.md)
+> - **使用前必读**：[免责声明](DISCLAIMER.md)
+>
+> 本修改版仅供个人学习、研究与技术交流，请支持官方版本。下方是上游仓库的原始 README 内容，版权归原作者所有。
+
+---
+
 # Plain Craft Launcher
 
 [![Stars](https://img.shields.io/github/stars/Meloong-Git/PCL?style=flat&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEiIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHBhdGggZD0iTTggLjI1YS43NS43NSAwIDAgMSAuNjczLjQxOGwxLjg4MiAzLjgxNSA0LjIxLjYxMmEuNzUuNzUgMCAwIDEgLjQxNiAxLjI3OWwtMy4wNDYgMi45Ny43MTkgNC4xOTJhLjc1MS43NTEgMCAwIDEtMS4wODguNzkxTDggMTIuMzQ3bC0zLjc2NiAxLjk4YS43NS43NSAwIDAgMS0xLjA4OC0uNzlsLjcyLTQuMTk0TC44MTggNi4zNzRhLjc1Ljc1IDAgMCAxIC40MTYtMS4yOGw0LjIxLS42MTFMNy4zMjcuNjY4QS43NS43NSAwIDAgMSA4IC4yNVoiIGZpbGw9IiNlYWM1NGYiLz48L3N2Zz4=&logoSize=auto&label=Stars&labelColor=444444&color=eac54f)](https://github.com/Meloong-Git/PCL/)

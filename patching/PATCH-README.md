@@ -1,7 +1,7 @@
 # PCL 2.99.0.0 补丁说明（二进制改造）
 
 原始文件：仓库根目录 `Plain Craft Launcher 2.exe`（5,980,160 字节，官方正式版 2.99.0.0）。
-产物：`build/Plain Craft Launcher 2（deepseek修改）.exe`（5,976,064 字节，Cecil 重写 + 版本信息后布局有位移，属正常）。
+产物：`../build/Plain Craft Launcher 2（deepseek修改）.exe`（5,976,064 字节，Cecil 重写 + 版本信息后布局有位移，属正常）。
 
 ## 改动内容
 
