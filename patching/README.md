@@ -45,24 +45,15 @@ PCL 用 `Public Const RestrictMcDownload As Boolean = True` 控制下载相关�
 5. **结构验证**：`RuntimeHelpers.PrepareMethod` 可在不执行方法的前提下触发 JIT，从而在无 GUI 环境中
    判断 IL 是否合法；配合 IL dump 逐条比对分支目标与 EH 表边界。
 
-## 复现步骤（本地实验）
+## 分析流程（原理性描述）
 
-> 需要自行准备官方 2.99.0.0 发布文件；仓库不附带。
+1. **读取元数据**：解析 PE/CLI 头与方法体，列出目标方法的指令、局部变量与异常处理表。
+2. **源码对照**：把方法体与公开 VB 源码逐句比对，标出被常量折叠移除的语句、以及残留但不再使用的局部变量。
+3. **重建调用点**：按源码语义在被裁剪的位置插入调用或分支，类型与方法引用尽量复用二进制中已有的元数据。
+4. **结构校验**：IL dump 检查分支目标与异常处理表边界，再用 `PrepareMethod` 触发 JIT 判断结构是否合法。
+5. **差异比对**：把内嵌资源清单、PE 节与官方样本对照，确认改动只落在预期位置。
 
-```bat
-:: 1) 原始字节补丁（对照 LoaderInit / LoadInstanceFinished 的 IL 偏移）
-python patch.py "Plain Craft Launcher 2.exe" step1.exe
-
-:: 2) 重建分发调用点（Cecil 写回）
-csc -nologo -out:PatchCecil.exe -r:Mono.Cecil.dll PatchCecil.cs Resolver.cs
-PatchCecil.exe step1.exe patched.exe <从内嵌资源解出的依赖目录>
-
-:: 3) 重建无参入口与资源页安装按钮
-csc -nologo -out:PatchFull.exe -r:Mono.Cecil.dll PatchFull.cs Resolver.cs
-PatchFull.exe patched.exe result.exe <依赖目录>
-```
-
-依赖目录可用 `tools/ExtractRes.cs` 从官方程序内嵌资源中解出（仅本地使用，请勿再分发）。
+`tools/` 中的程序分别服务于上述步骤；本仓库不提供偏移表、一键补丁脚本或可直接套用的构建流程。
 
 ## 工具清单（`tools/`）
 

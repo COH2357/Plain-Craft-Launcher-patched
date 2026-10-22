@@ -1,11 +1,16 @@
-"""Stage 1: two raw IL byte patches on the official PCL 2.99.0.0 executable.
+"""Research artifact: raw IL byte edits used while studying constant folding.
 
-usage: python patch.py <official.exe> <output.exe>
+This file is kept as an analysis record of the experiment, not as a supported patch
+script. The offsets and byte values below are specific to a single build (PCL
+2.99.0.0) and do not generalise; they are documented so the observations can be
+audited, not so that they can be applied blindly.
 
-  1. PCL.PageDownloadInstall::LoaderInit  -- replace the erased loader construction with
-     `ldsfld PCL.ModDownload::DlClientListLoader` so the download page shows the source list.
-  2. PCL.PageDownloadInstall::LoadInstanceFinished -- `ldc.i4.2` (Collapsed) -> `ldc.i4.0` (Visible)
-     for the Minecraft download card.
+What the two edits demonstrate:
+  1. PageDownloadInstall::LoaderInit -- the Else branch (real loader construction) is
+     folded away, leaving only a stub task; the stub can be replaced by reading the
+     type's existing loader field, which the type's static constructor initialises.
+  2. PageDownloadInstall::LoadInstanceFinished -- the card's Visibility is folded to
+     the constant Collapsed; the constant is what carries the choice.
 
 Requires: pip install pefile
 """
